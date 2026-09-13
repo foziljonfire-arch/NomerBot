@@ -1,0 +1,660 @@
+import asyncio
+import json
+import os
+import threading
+from datetime import datetime
+from flask import Flask
+
+from aiogram import Bot, Dispatcher, F, types
+from aiogram.filters import CommandStart
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    Message,
+    CallbackQuery,
+    FSInputFile,
+)
+
+# ============ SOZLAMALAR ============
+BOT_TOKEN = "8843105986:AAGn1GNZKf748_hGOZWhri7A2lJF8q0pIbU"
+ADMIN_ID = 8374511835
+ADMIN_USERNAME = "@alphauzff"
+CARD_NUMBER = "9860 1666 5545 7637"
+CARD_OWNER = "U.M"
+CHANNEL_URL = "https://t.me/alpha02uz"  # Kanal obunasi uchun
+
+# ============ TELEGRAM AKKAUNTLAR ============
+TELEGRAM_ACCOUNTS = [
+    {"nomer": "+998901234567", "narxi": 10000},
+    {"nomer": "+998902345678", "narxi": 12000},
+    {"nomer": "+998903456789", "narxi": 15000},
+    {"nomer": "+998904567890", "narxi": 18000},
+    {"nomer": "+998905678901", "narxi": 20000},
+    {"nomer": "+998906789012", "narxi": 22000},
+    {"nomer": "+998907890123", "narxi": 25000},
+    {"nomer": "+998908901234", "narxi": 28000},
+    {"nomer": "+998909012345", "narxi": 30000},
+    {"nomer": "+998910123456", "narxi": 35000},
+]
+
+# ============ PREMIUM TELEGRAM AKKAUNTLAR ============
+PREMIUM_ACCOUNTS = {
+    "🇿🇦 Janubiy Afrika": 15000,
+    "🇮🇩 Indonesiya": 20000,
+    "🇨🇱 Chili": 18000,
+    "🇲🇦 Marokko": 17000,
+    "🇨🇦 Kanada": 25000,
+}
+
+# ============ VIRTUAL NOMERLAR ============
+VIRTUAL_NUMBERS = {
+    "🇺🇿 O'zbekiston": 10000,
+    "🇷🇺 Rossiya": 8000,
+    "🇺🇸 Amerika (USA)": 20000,
+    "🇮🇳 Hindiston": 12000,
+    "🇸🇬 Singapur": 15000,
+    "🇬🇧 Buyuk Britaniya": 18000,
+    "🇿🇦 Janubiy Afrika": 22000,
+    "🇮🇩 Indonesiya": 16000,
+    "🇯🇵 Yaponiya": 25000,
+    "🇰🇷 Janubiy Koreya": 30000,
+}
+
+# ============ YOUTUBE STREAM NOMERLAR (RANDOM DAVLATLAR) ============
+YOUTUBE_STREAM = {
+    "🇲🇦 Marokko": 3000,
+    "🇹🇳 Tunis": 3500,
+    "🇱🇧 Livan": 4000,
+    "🇴🇲 Oman": 4500,
+    "🇶🇦 Qatar": 5000,
+    "🇰🇼 Kuveyt": 5500,
+    "🇧🇭 Bahreyn": 6000,
+    "🇵🇰 Pokiston": 6500,
+    "🇧🇩 Bangladesh": 7000,
+    "🇹🇭 Tailand": 7500,
+    "🇵🇭 Filippin": 8000,
+    "🇻🇳 Vyetnam": 8500,
+    "🇲🇲 Myanma": 9000,
+    "🇰🇭 Kambodja": 9500,
+    "🇱🇦 Laos": 10000,
+}
+
+DB_FILE = "database.json"
+LOGO_FILE = "logo.jpg"
+# =====================================
+
+bot = Bot(token=BOT_TOKEN)
+dp = Dispatcher(storage=MemoryStorage())
+
+
+# ---------- JSON baza ----------
+def load_db():
+    if not os.path.exists(DB_FILE):
+        return {"users": {}}
+    with open(DB_FILE, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_db(db):
+    with open(DB_FILE, "w", encoding="utf-8") as f:
+        json.dump(db, f, ensure_ascii=False, indent=2)
+
+
+def get_user(db, user_id):
+    uid = str(user_id)
+    if uid not in db["users"]:
+        db["users"][uid] = {"balance": 0, "history": [], "subscribed": False}
+    return db["users"][uid]
+
+
+# ---------- FSM holatlari ----------
+class TopUp(StatesGroup):
+    waiting_check = State()
+
+
+class AdminHelp(StatesGroup):
+    waiting_message = State()
+
+
+class TelegramAccountBuy(StatesGroup):
+    waiting_choice = State()
+
+
+class PremiumAccountBuy(StatesGroup):
+    waiting_choice = State()
+
+
+class VirtualNumberBuy(StatesGroup):
+    waiting_choice = State()
+
+
+class YoutubeStreamBuy(StatesGroup):
+    waiting_choice = State()
+
+
+# ---------- Klaviaturalar ----------
+def main_menu():
+    kb = [
+        [InlineKeyboardButton(text="☀️ Hisob to'ldirish", callback_data="topup")],
+        [InlineKeyboardButton(text="📱 Tayyor Telegram Akkauntlar", callback_data="telegram_accounts")],
+        [InlineKeyboardButton(text="🌐 Virtual Nomerlar", callback_data="virtual_numbers")],
+        [InlineKeyboardButton(text="👑 Premium Telegram Akkauntlar", callback_data="premium_accounts")],
+        [InlineKeyboardButton(text="📺 YouTube Stream Nomerlar", callback_data="youtube_stream")],
+        [InlineKeyboardButton(text="🆘 Admin yordam", callback_data="admin_help")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def back_button(target="back_main"):
+    kb = [[InlineKeyboardButton(text="⬅️ Orqaga", callback_data=target)]]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def telegram_accounts_menu():
+    kb = []
+    for idx, acc in enumerate(TELEGRAM_ACCOUNTS):
+        kb.append([InlineKeyboardButton(
+            text=f"{acc['nomer']} — {acc['narxi']:,} so'm",
+            callback_data=f"teleacc_{idx}"
+        )])
+    kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def premium_accounts_menu():
+    kb = []
+    for name, price in PREMIUM_ACCOUNTS.items():
+        kb.append([InlineKeyboardButton(
+            text=f"{name} — {price:,} so'm",
+            callback_data=f"prem_acc_{name}"
+        )])
+    kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def virtual_numbers_menu():
+    kb = []
+    for name, price in VIRTUAL_NUMBERS.items():
+        kb.append([InlineKeyboardButton(
+            text=f"{name} — {price:,} so'm",
+            callback_data=f"virt_num_{name}"
+        )])
+    kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+def youtube_stream_menu():
+    kb = []
+    for name, price in YOUTUBE_STREAM.items():
+        kb.append([InlineKeyboardButton(
+            text=f"{name} — {price:,} so'm",
+            callback_data=f"yt_stream_{name}"
+        )])
+    kb.append([InlineKeyboardButton(text="⬅️ Orqaga", callback_data="back_main")])
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+
+# ---------- /start ----------
+@dp.message(CommandStart())
+async def start_handler(message: Message, state: FSMContext):
+    await state.clear()
+    db = load_db()
+    user = get_user(db, message.from_user.id)
+    
+    # Kanal obunasi tekshiruvi (opsional - qanday qilib tekshirish kerak?)
+    # Shu yerda siz kanal obunasini tekshirsangiz bo'ladi yoki shunchaki obuna so'rasangiz
+    if not user["subscribed"]:
+        await message.answer(
+            f"👋 Assalomu alaykum, {message.from_user.full_name}!\n\n"
+            f"🔔 Botdan foydalanish uchun avval kanalga obuna bo'ling:\n"
+            f"<a href='{CHANNEL_URL}'>📢 {CHANNEL_URL}</a>\n\n"
+            f"Obuna bo'lganingizdan keyin /start ni qayta bosing.",
+            parse_mode="HTML"
+        )
+        return
+    
+    save_db(db)
+
+    caption = (
+        f"☀️ Assalomu alaykum, {message.from_user.full_name}!\n\n"
+        "🌴 Alpha Nomer Servisiga xush kelibsiz — tezkor, ishonchli va qulay xizmat sizni kutmoqda.\n\n"
+        f"💰 Balansingiz: <b>{user['balance']:,} so'm</b>\n\n"
+        "Quyidagi bo'limdan birini tanlang 👇"
+    )
+
+    if os.path.exists(LOGO_FILE):
+        await message.answer_photo(
+            photo=FSInputFile(LOGO_FILE),
+            caption=caption,
+            parse_mode="HTML",
+            reply_markup=main_menu(),
+        )
+    else:
+        await message.answer(
+            caption,
+            parse_mode="HTML",
+            reply_markup=main_menu(),
+        )
+
+
+@dp.callback_query(F.data == "back_main")
+async def back_main(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    db = load_db()
+    user = get_user(db, callback.from_user.id)
+    await callback.message.edit_text(
+        f"💰 Balansingiz: <b>{user['balance']:,} so'm</b>\n\n🏠 Bosh menyu:",
+        parse_mode="HTML",
+        reply_markup=main_menu(),
+    )
+    await callback.answer()
+
+
+# ---------- Hisob to'ldirish ----------
+@dp.callback_query(F.data == "topup")
+async def topup_handler(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(TopUp.waiting_check)
+    await callback.message.edit_text(
+        "💳 Quyidagi Humo kartaga to'lov qiling:\n\n"
+        f"🏦 Karta: <b>{CARD_NUMBER}</b>\n"
+        f"👤 Egasi: <b>{CARD_OWNER}</b>\n\n"
+        "✅ To'lovni amalga oshirgach, chek skrinshotini shu yerga yuboring 👇\n\n"
+        "🔒 100% ishonchli xizmat — balansingiz tekshiruvdan so'ng darhol to'ldiriladi.",
+        parse_mode="HTML",
+        reply_markup=back_button(),
+    )
+    await callback.answer()
+
+
+@dp.message(TopUp.waiting_check, F.photo)
+async def receive_check(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer(
+        "✅ Chekingiz qabul qilindi!\n"
+        "Admin tekshiruvidan so'ng 5–10 daqiqa ichida hisobingiz to'ldiriladi.",
+        reply_markup=main_menu(),
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="➕ 1 000", callback_data=f"add_{message.from_user.id}_1000"),
+            InlineKeyboardButton(text="➕ 5 000", callback_data=f"add_{message.from_user.id}_5000"),
+        ],
+        [
+            InlineKeyboardButton(text="➕ 10 000", callback_data=f"add_{message.from_user.id}_10000"),
+            InlineKeyboardButton(text="➕ 50 000", callback_data=f"add_{message.from_user.id}_50000"),
+        ],
+        [InlineKeyboardButton(text="🔙 Boshqa summa", callback_data="topup_custom")],
+    ])
+    await bot.send_message(
+        ADMIN_ID,
+        f"💳 To'lov cheki!\n"
+        f"👤 {message.from_user.full_name} (ID: {message.from_user.id})\n\n"
+        "Qo'llaniladigan summasini tanlang:",
+        reply_markup=kb,
+    )
+
+
+@dp.callback_query(F.data.startswith("add_"))
+async def admin_add_balance(callback: CallbackQuery):
+    if callback.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = callback.data.split("_")
+        user_id = int(parts[1])
+        amount = int(parts[2])
+        
+        db = load_db()
+        user = get_user(db, user_id)
+        user["balance"] += amount
+        user["history"].append({
+            "type": "topup",
+            "amount": amount,
+            "time": str(datetime.now())
+        })
+        save_db(db)
+        
+        await callback.answer(f"✅ {amount:,} so'm qo'shildi", show_alert=True)
+        await bot.send_message(
+            user_id,
+            f"💰 Balansingiz {amount:,} so'm ga to'ldirildi!\n"
+            f"📊 Yangi balans: {user['balance']:,} so'm",
+            reply_markup=main_menu()
+        )
+    except Exception as e:
+        await callback.answer(f"❌ Xato: {str(e)}", show_alert=True)
+
+
+# ========== TELEGRAM AKKAUNTLAR ==========
+@dp.callback_query(F.data == "telegram_accounts")
+async def telegram_accounts_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "📱 <b>TAYYOR TELEGRAM AKKAUNTLAR</b>\n\n"
+        "✅ Qo'lga olingan akkauntlar\n"
+        "🌍 O'zbek va boshqa nomerlar\n\n"
+        "Kerakli akkauntni tanlang 👇",
+        parse_mode="HTML",
+        reply_markup=telegram_accounts_menu(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("teleacc_"))
+async def buy_telegram_account(callback: CallbackQuery):
+    idx = int(callback.data.replace("teleacc_", ""))
+    acc = TELEGRAM_ACCOUNTS[idx]
+    
+    db = load_db()
+    user = get_user(db, callback.from_user.id)
+    price = acc["narxi"]
+    
+    if user["balance"] < price:
+        await callback.answer(
+            f"❌ Balansingiz yetarli emas!\nKerak: {price:,} so'm\nMavjud: {user['balance']:,} so'm",
+            show_alert=True,
+        )
+        return
+    
+    user["balance"] -= price
+    user["history"].append({
+        "type": "telegram_account",
+        "nomer": acc["nomer"],
+        "amount": price,
+        "time": str(datetime.now())
+    })
+    save_db(db)
+    
+    await callback.message.edit_text(
+        f"✅ Buyurtma qabul qilindi!\n"
+        f"📱 Nomer: {acc['nomer']}\n"
+        f"💵 {price:,} so'm\n\n"
+        f"💰 Qolgan balansingiz: {user['balance']:,} so'm\n\n"
+        f"Admin akkauntni tekshirib sizga yuboradi.",
+        reply_markup=main_menu(),
+    )
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"📱 Yangi Telegram akkaunt buyurtma!\n"
+        f"👤 {callback.from_user.full_name} (ID: {callback.from_user.id})\n"
+        f"📞 Nomer: {acc['nomer']}\n"
+        f"💵 {price:,} so'm\n\n"
+        f"Javob berish: /reply_{callback.from_user.id} <akkaunt ma'lumotlari>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ========== VIRTUAL NOMERLAR ==========
+@dp.callback_query(F.data == "virtual_numbers")
+async def virtual_numbers_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "🌐 <b>VIRTUAL NOMERLAR</b>\n\n"
+        "🌍 10 ta davlatdan nomerlar\n"
+        "💵 10 ming dan 40 mingacha\n\n"
+        "Davlatni tanlang 👇",
+        parse_mode="HTML",
+        reply_markup=virtual_numbers_menu(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("virt_num_"))
+async def buy_virtual_number(callback: CallbackQuery):
+    country = callback.data.replace("virt_num_", "")
+    price = VIRTUAL_NUMBERS.get(country)
+    
+    if price is None:
+        await callback.answer("❌ Davlat topilmadi", show_alert=True)
+        return
+    
+    db = load_db()
+    user = get_user(db, callback.from_user.id)
+    
+    if user["balance"] < price:
+        await callback.answer(
+            f"❌ Balansingiz yetarli emas!\nKerak: {price:,} so'm\nMavjud: {user['balance']:,} so'm",
+            show_alert=True,
+        )
+        return
+    
+    user["balance"] -= price
+    user["history"].append({
+        "type": "virtual_number",
+        "country": country,
+        "amount": price,
+        "time": str(datetime.now())
+    })
+    save_db(db)
+    
+    await callback.message.edit_text(
+        f"✅ Buyurtma qabul qilindi!\n"
+        f"{country} — {price:,} so'm\n\n"
+        f"💰 Qolgan balansingiz: {user['balance']:,} so'm\n\n"
+        f"Admin nomerni tekshirib sizga yuboradi. ⏳",
+        reply_markup=main_menu(),
+    )
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"🌐 Yangi Virtual nomer buyurtma!\n"
+        f"👤 {callback.from_user.full_name} (ID: {callback.from_user.id})\n"
+        f"🌍 {country}\n"
+        f"💵 {price:,} so'm\n\n"
+        f"Nomerni yuboring: /reply_{callback.from_user.id} <nomer>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ========== PREMIUM TELEGRAM AKKAUNTLAR ==========
+@dp.callback_query(F.data == "premium_accounts")
+async def premium_accounts_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "👑 <b>PREMIUM TELEGRAM AKKAUNTLAR</b>\n\n"
+        "✨ 100% Premium tarifi bilan\n"
+        "🌍 5 ta davlatdan nomerlar\n"
+        "💵 15 ming dan 50 mingacha\n\n"
+        "Davlatni tanlang 👇",
+        parse_mode="HTML",
+        reply_markup=premium_accounts_menu(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("prem_acc_"))
+async def buy_premium_account(callback: CallbackQuery):
+    country = callback.data.replace("prem_acc_", "")
+    price = PREMIUM_ACCOUNTS.get(country)
+    
+    if price is None:
+        await callback.answer("❌ Davlat topilmadi", show_alert=True)
+        return
+    
+    db = load_db()
+    user = get_user(db, callback.from_user.id)
+    
+    if user["balance"] < price:
+        await callback.answer(
+            f"❌ Balansingiz yetarli emas!\nKerak: {price:,} so'm\nMavjud: {user['balance']:,} so'm",
+            show_alert=True,
+        )
+        return
+    
+    user["balance"] -= price
+    user["history"].append({
+        "type": "premium_account",
+        "country": country,
+        "amount": price,
+        "time": str(datetime.now())
+    })
+    save_db(db)
+    
+    await callback.message.edit_text(
+        f"✅ Buyurtma qabul qilindi!\n"
+        f"👑 {country} Premium Akkaunt\n"
+        f"💵 {price:,} so'm\n\n"
+        f"💰 Qolgan balansingiz: {user['balance']:,} so'm\n\n"
+        f"🔐 Barcha premium funksiyalar (Stiker, Filter, va h.k.z) ochiq!\n"
+        f"Admin akkauntni sizga yuboradi.",
+        reply_markup=main_menu(),
+    )
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"👑 Yangi Premium Telegram akkaunt buyurtma!\n"
+        f"👤 {callback.from_user.full_name} (ID: {callback.from_user.id})\n"
+        f"🌍 {country}\n"
+        f"💵 {price:,} so'm\n\n"
+        f"Premium akkauntni yuboring: /reply_{callback.from_user.id} <login:password>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ========== YOUTUBE STREAM NOMERLAR ==========
+@dp.callback_query(F.data == "youtube_stream")
+async def youtube_stream_handler(callback: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await callback.message.edit_text(
+        "📺 <b>YOUTUBE STREAM (EFIR) NOMERLAR</b>\n\n"
+        "🔴 YouTube Live Streaming uchun nomerlar\n"
+        "🌍 Random davlatlar\n"
+        "💵 3 ming dan 10 mingacha\n\n"
+        "Davlatni tanlang 👇",
+        parse_mode="HTML",
+        reply_markup=youtube_stream_menu(),
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("yt_stream_"))
+async def buy_youtube_stream(callback: CallbackQuery):
+    country = callback.data.replace("yt_stream_", "")
+    price = YOUTUBE_STREAM.get(country)
+    
+    if price is None:
+        await callback.answer("❌ Davlat topilmadi", show_alert=True)
+        return
+    
+    db = load_db()
+    user = get_user(db, callback.from_user.id)
+    
+    if user["balance"] < price:
+        await callback.answer(
+            f"❌ Balansingiz yetarli emas!\nKerak: {price:,} so'm\nMavjud: {user['balance']:,} so'm",
+            show_alert=True,
+        )
+        return
+    
+    user["balance"] -= price
+    user["history"].append({
+        "type": "youtube_stream",
+        "country": country,
+        "amount": price,
+        "time": str(datetime.now())
+    })
+    save_db(db)
+    
+    await callback.message.edit_text(
+        f"✅ Buyurtma qabul qilindi!\n"
+        f"📺 {country} — YouTube Stream Nomer\n"
+        f"💵 {price:,} so'm\n\n"
+        f"💰 Qolgan balansingiz: {user['balance']:,} so'm\n\n"
+        f"Admin nomerni tekshirib sizga yuboradi. ⏳",
+        reply_markup=main_menu(),
+    )
+    
+    await bot.send_message(
+        ADMIN_ID,
+        f"📺 Yangi YouTube Stream nomer buyurtma!\n"
+        f"👤 {callback.from_user.full_name} (ID: {callback.from_user.id})\n"
+        f"🌍 {country}\n"
+        f"💵 {price:,} so'm\n\n"
+        f"Nomerni yuboring: /reply_{callback.from_user.id} <nomer>",
+        parse_mode="HTML",
+    )
+    await callback.answer()
+
+
+# ---------- Admin yordam ----------
+@dp.callback_query(F.data == "admin_help")
+async def admin_help_handler(callback: CallbackQuery, state: FSMContext):
+    await state.set_state(AdminHelp.waiting_message)
+    await callback.message.edit_text(
+        f"✍️ Muammoingizni yozing, admin tez orada javob beradi:\n\n"
+        f"📱 Admin: {ADMIN_USERNAME}",
+        reply_markup=back_button(),
+    )
+    await callback.answer()
+
+
+@dp.message(AdminHelp.waiting_message)
+async def forward_to_admin(message: Message, state: FSMContext):
+    await state.clear()
+    await message.answer("✅ Xabaringiz adminga yuborildi.", reply_markup=main_menu())
+    await bot.send_message(
+        ADMIN_ID,
+        f"🆘 Yordam so'rovi!\n"
+        f"👤 {message.from_user.full_name} (ID: {message.from_user.id})\n\n"
+        f"Xabar: {message.text}\n\n"
+        f"Javob berish: /reply_{message.from_user.id} <javob matni>",
+    )
+
+
+# ---------- Admin javob berishi ----------
+@dp.message(F.text.startswith("/reply_"))
+async def admin_reply(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        parts = message.text.split(" ", 1)
+        user_id = int(parts[0].replace("/reply_", ""))
+        text = parts[1]
+        await bot.send_message(user_id, f"📩 <b>Admindan javob:</b>\n{text}", parse_mode="HTML")
+        await message.answer("✅ Javob yuborildi.")
+    except (IndexError, ValueError):
+        await message.answer("❌ Format: /reply_USERID javob matni")
+
+
+# ---------- Admin: foydalanuvchi balansini ko'rish ----------
+@dp.message(F.text.startswith("/balance_"))
+async def admin_check_balance(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    try:
+        user_id = message.text.replace("/balance_", "").strip()
+        db = load_db()
+        user = get_user(db, user_id)
+        await message.answer(f"👤 ID: {user_id}\n💰 Balans: {user['balance']:,} so'm")
+    except Exception:
+        await message.answer("❌ Foydalanuvchi topilmadi.")
+
+
+# ---------- Flask veb-server ----------
+app = Flask(__name__)
+
+
+@app.route("/")
+def home():
+    return "Alpha Nomer Bot ishlayapti ✅"
+
+
+def run_flask():
+    port = int(os.environ.get("PORT", 8080))
+    app.run(host="0.0.0.0", port=port)
+
+
+async def main():
+    print("✅ Alpha Nomer Bot ishga tushdi — 24/7 rejimda...")
+    threading.Thread(target=run_flask, daemon=True).start()
+    await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
+
+
+if __name__ == "__main__":
+    asyncio.run(main())
